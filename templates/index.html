@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>DayScan — Daily Task Companion</title>
+  <style>
+    :root { color-scheme: light; --ink:#182033; --muted:#667085; --paper:#f5f6fb; --card:#fff; --line:#e5e7ef; --accent:#6d5dfc; --green:#16876b; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:radial-gradient(circle at top left,#e8e7ff 0,transparent 38%),var(--paper); color:var(--ink); font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { max-width:900px; margin:0 auto; padding:34px 18px 56px; }
+    header { display:flex; align-items:center; gap:14px; margin-bottom:26px; }
+    .logo { width:52px;height:52px;display:grid;place-items:center;border-radius:16px;background:#191c34;color:white;font-size:27px; }
+    h1 { margin:0;font-size:clamp(1.7rem,4vw,2.4rem);letter-spacing:-.04em; }
+    .subtitle { margin:3px 0 0;color:var(--muted); }
+    .grid { display:grid;grid-template-columns:1.1fr .9fr;gap:18px; }
+    .card { background:var(--card);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 10px 32px #25264b0a; }
+    h2 { margin:0 0 6px;font-size:1.15rem; }
+    .hint { color:var(--muted);font-size:.92rem;margin:0 0 18px; }
+    form { display:flex;gap:8px; }
+    input { width:100%;min-width:0;border:1px solid #d6d9e4;border-radius:12px;padding:12px 13px;font:inherit; }
+    button { border:0;border-radius:12px;padding:11px 15px;background:var(--accent);color:white;font:600 .95rem system-ui;cursor:pointer;white-space:nowrap; }
+    button:focus-visible,input:focus-visible { outline:3px solid #a9a1ff;outline-offset:2px; }
+    button.secondary { background:#ecebff;color:#4438ca; }
+    button:disabled { opacity:.6;cursor:wait; }
+    ul { list-style:none;padding:0;margin:18px 0 0;display:grid;gap:9px; }
+    li { display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:13px; }
+    li span { flex:1;overflow-wrap:anywhere; }
+    li.done span { color:#8b93a5;text-decoration:line-through; }
+    .check { width:19px;height:19px;accent-color:var(--green); }
+    .remove { background:transparent;color:#7b8190;padding:5px 7px;font-size:1.1rem; }
+    .empty { color:var(--muted);border:1px dashed #d7d9e5;border-radius:13px;padding:18px;text-align:center;margin-top:16px; }
+    .ai-box { min-height:160px;border-radius:16px;background:#f7f6ff;padding:16px;white-space:pre-wrap;overflow-wrap:anywhere; }
+    .status { color:var(--muted);font-size:.86rem;margin-top:10px;min-height:1.3em; }
+    .badge { display:inline-flex;align-items:center;gap:6px;background:#e9f8f2;color:#087455;border-radius:99px;padding:5px 10px;font-size:.78rem;font-weight:700;margin-bottom:14px; }
+    footer { color:var(--muted);font-size:.85rem;text-align:center;margin-top:20px; }
+    @media(max-width:700px){.grid{grid-template-columns:1fr}main{padding-top:22px}.card{padding:18px}}
+    @media(max-width:420px){form{flex-direction:column}form button{width:100%}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="logo" aria-hidden="true">👻</div>
+    <div><h1>DayScan</h1><p class="subtitle">A little nudge toward what matters today.</p></div>
+  </header>
+  <div class="grid">
+    <section class="card" aria-labelledby="tasks-heading">
+      <h2 id="tasks-heading">Today's tasks</h2>
+      <p class="hint">Capture the things you don't want your day to forget.</p>
+      <form id="task-form">
+        <input id="task-input" maxlength="300" placeholder="e.g. Revise AI agents notes" aria-label="New task" required>
+        <button type="submit">Add task +</button>
+      </form>
+      <div id="task-list"></div>
+      <p class="status" id="task-count" aria-live="polite"></p>
+    </section>
+    <section class="card" aria-labelledby="ai-heading">
+      <span class="badge">● LOCAL AI</span>
+      <h2 id="ai-heading">Ask your task ghost</h2>
+      <p class="hint">Gemma via Ollama can summarize your list and suggest one next step.</p>
+      <div class="ai-box" id="ai-output" aria-live="polite">Add a few tasks, then ask for a calm, practical next step.</div>
+      <p style="margin:14px 0 0"><button id="ask-ai" class="secondary" type="button">Ask local AI ✨</button></p>
+      <p class="status" id="ai-status" aria-live="polite">Your task list stays in this browser. The AI prompt is sent to your local Ollama service.</p>
+    </section>
+  </div>
+  <footer>Small steps count. AI suggestions can be wrong—use your own judgment.</footer>
+</main>
+<script>
+(() => {
+  const KEY = "dayscan.tasks.v1";
+  let tasks = [];
+  try { tasks = JSON.parse(localStorage.getItem(KEY) || "[]"); if (!Array.isArray(tasks)) tasks = []; } catch (_) { tasks = []; }
+  const form = document.querySelector("#task-form");
+  const input = document.querySelector("#task-input");
+  const list = document.querySelector("#task-list");
+  const count = document.querySelector("#task-count");
+  const output = document.querySelector("#ai-output");
+  const status = document.querySelector("#ai-status");
+  const askButton = document.querySelector("#ask-ai");
+
+  function save() { localStorage.setItem(KEY, JSON.stringify(tasks)); render(); }
+  function render() {
+    list.replaceChildren();
+    if (!tasks.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty"; empty.textContent = "No tasks yet. Add your first one above.";
+      list.append(empty);
+    } else {
+      const ul = document.createElement("ul");
+      tasks.forEach((task, index) => {
+        const li = document.createElement("li");
+        if (task.done) li.classList.add("done");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox"; checkbox.className = "check"; checkbox.checked = !!task.done;
+        checkbox.setAttribute("aria-label", "Mark " + task.text + " complete");
+        checkbox.addEventListener("change", () => { tasks[index].done = checkbox.checked; save(); });
+        const span = document.createElement("span"); span.textContent = task.text;
+        const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove";
+        remove.textContent = "×"; remove.setAttribute("aria-label", "Delete " + task.text);
+        remove.addEventListener("click", () => { tasks.splice(index, 1); save(); });
+        li.append(checkbox, span, remove); ul.append(li);
+      });
+      list.append(ul);
+    }
+    const completed = tasks.filter(t => t.done).length;
+    count.textContent = tasks.length ? completed + " of " + tasks.length + " completed" : "Your list is ready when you are.";
+  }
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    tasks.push({text, done:false});
+    input.value = ""; save(); input.focus();
+  });
+  askButton.addEventListener("click", async () => {
+    if (!tasks.length) { output.textContent = "Add at least one task first."; return; }
+    askButton.disabled = true; output.textContent = "Thinking locally…"; status.textContent = "Contacting your local Ollama model.";
+    try {
+      const response = await fetch("/api/suggest", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({tasks:tasks.filter(t => !t.done).map(t => t.text)})
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "The AI request failed.");
+      output.textContent = data.suggestion;
+      status.textContent = "Generated by " + data.model + " through local Ollama.";
+    } catch (error) {
+      output.textContent = error.message || "Could not reach the local AI model.";
+      status.textContent = "Check that Ollama is running and the configured model is installed.";
+    } finally { askButton.disabled = false; }
+  });
+  render();
+})();
+</script>
+</body>
+</html>
